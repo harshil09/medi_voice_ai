@@ -1,6 +1,8 @@
 """Database helpers for REST API and VAPI tools."""
 import re
+
 from database import get_connection
+from services import scheduling
 
 # Maps caller / LLM text → DB specialty column
 STT_PHRASES = {
@@ -149,21 +151,11 @@ def get_doctor_by_name(doctor_name: str) -> dict | None:
     return None
 
 
-def get_available_slots(doctor_name: str, limit: int = 2) -> list[dict]:
+def get_available_slots(doctor_name: str, limit: int = 3) -> list[dict]:
     doctor = get_doctor_by_name(doctor_name)
     if not doctor:
         return []
-    rows = _fetchall(
-        """
-        SELECT slot_date AS date, slot_time AS time
-        FROM doctor_slots
-        WHERE doctor_id = ? AND is_booked = 0
-        ORDER BY slot_date, slot_time
-        LIMIT ?
-        """,
-        (doctor["id"], limit),
-    )
-    return rows
+    return scheduling.get_available_slots(doctor["id"], limit=limit)
 
 
 def book_appointment(
@@ -177,21 +169,16 @@ def book_appointment(
     if not doctor:
         return {"success": False, "message": f"Doctor not found: {doctor_name}"}
 
+    slot_time_norm = scheduling.normalize_time(slot_time)
+    if not slot_time_norm:
+        return {"success": False, "message": "Invalid time format. Use HH:MM (e.g. 09:00)."}
+
+    if not scheduling.is_slot_available(doctor["id"], slot_date, slot_time_norm):
+        return {"success": False, "message": "That slot is not available. Ask for other times."}
+
     def work(conn):
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id FROM doctor_slots
-            WHERE doctor_id = ? AND slot_date = ? AND slot_time = ? AND is_booked = 0
-            """,
-            (doctor["id"], slot_date, slot_time),
-        )
-        slot = cur.fetchone()
-        if not slot:
-            return {"success": False, "message": "That slot is not available. Ask for other times."}
-
-        slot_id = slot["id"]
-        scheduled_at = f"{slot_date} {slot_time}"
+        scheduled_at = f"{slot_date} {slot_time_norm}"
         pname = patient_name.strip()
 
         cur.execute("SELECT id FROM patients WHERE LOWER(full_name) = LOWER(?)", (pname,))
@@ -206,15 +193,14 @@ def book_appointment(
         cur.execute(
             """
             INSERT INTO appointments (patient_id, doctor_id, slot_id, scheduled_at, status)
-            VALUES (?, ?, ?, ?, 'confirmed')
+            VALUES (?, ?, NULL, ?, 'confirmed')
             """,
-            (patient_id, doctor["id"], slot_id, scheduled_at),
+            (patient_id, doctor["id"], scheduled_at),
         )
-        cur.execute("UPDATE doctor_slots SET is_booked = 1 WHERE id = ?", (slot_id,))
         conn.commit()
         return {
             "success": True,
-            "message": f"Booked: {patient_name} with {doctor['name']} on {slot_date} at {slot_time}.",
+            "message": f"Booked: {patient_name} with {doctor['name']} on {slot_date} at {slot_time_norm}.",
         }
 
     return _with_db(work)
@@ -232,20 +218,7 @@ def _patient_patterns(name: str) -> list[str]:
 
 
 def _normalize_time(slot_time: str | None) -> str | None:
-    if not slot_time or not str(slot_time).strip():
-        return None
-    t = str(slot_time).strip().lower().replace(".", "")
-    if re.fullmatch(r"\d{2}:\d{2}", t):
-        return t
-    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", t)
-    if not m:
-        return t
-    hour, minute, ampm = int(m.group(1)), m.group(2) or "00", m.group(3)
-    if ampm == "pm" and hour < 12:
-        hour += 12
-    if ampm == "am" and hour == 12:
-        hour = 0
-    return f"{hour:02d}:{minute}"
+    return scheduling.normalize_time(slot_time)
 
 
 def _date_patterns(slot_date: str) -> list[str]:
@@ -333,13 +306,45 @@ def cancel_appointment(
     return _with_db(work)
 
 
+def list_accepted_insurance() -> dict:
+    rows = _fetchall(
+        "SELECT name FROM insurance_providers WHERE accepted = 1 ORDER BY name"
+    )
+    names = [r["name"] for r in rows]
+    if not names:
+        return {
+            "providers": [],
+            "message": "No accepted insurance providers on file. Offer to transfer to billing.",
+        }
+    joined = ", ".join(names)
+    return {
+        "providers": names,
+        "message": (
+            f"We accept the following insurance providers: {joined}. "
+            "If the caller's provider is not listed, offer to check a specific name with check_insurance "
+            "or connect them with billing."
+        ),
+    }
+
+
 def check_insurance(provider_name: str) -> dict:
+    name = provider_name.strip()
+    if not name:
+        return {"accepted": False, "message": "Ask the caller for their insurance provider name."}
     row = _fetchone(
         "SELECT name, accepted FROM insurance_providers WHERE LOWER(name) LIKE LOWER(?) LIMIT 1",
-        (f"%{provider_name.strip()}%",),
+        (f"%{name}%",),
     )
     if not row:
-        return {"accepted": False, "message": f"We could not find {provider_name} in our list. Transfer to billing."}
+        return {
+            "accepted": False,
+            "message": (
+                f"We could not find {provider_name} in our list. "
+                "Tell the caller their plan may not be in-network. "
+                "If they ask what you do accept, call list_accepted_insurance. "
+                "Otherwise offer billing."
+            ),
+        }
     if row["accepted"]:
         return {
             "accepted": True,

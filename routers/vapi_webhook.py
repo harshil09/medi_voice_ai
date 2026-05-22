@@ -17,6 +17,8 @@ TOOL_ALIASES = {
     "book appointment": "book_appointment",
     "cancel appointment": "cancel_appointment",
     "check insurance": "check_insurance",
+    "list accepted insurance": "list_accepted_insurance",
+    "list insurance providers": "list_accepted_insurance",
 }
 
 SPECIALTY_INTROS = {
@@ -200,9 +202,22 @@ def _handle_get_slots(args: dict) -> str:
     doctor = hospital.get_doctor_by_name(doctor_name)
     if not doctor:
         return f"Doctor '{doctor_name}' not found. Use exact name from get_doctors_by_specialty."
-    slots = hospital.get_available_slots(doctor["name"], int(args.get("limit", 2) or 2))
+    limit = int(args.get("limit", 3) or 3)
+    slots = hospital.get_available_slots(doctor["name"], limit=limit)
     if not slots:
         return f"No open slots for {doctor['name']}."
+    dates = {s["date"] for s in slots}
+    if len(dates) == 1:
+        d = slots[0]["date"]
+        time_parts = [s["time"] for s in slots]
+        if len(time_parts) == 1:
+            times_text = time_parts[0]
+        else:
+            times_text = ", ".join(time_parts[:-1]) + f", or {time_parts[-1]}"
+        return (
+            f"{doctor['name']} is available on {d} at {times_text}. "
+            "Which time works better for you?"
+        )
     times = " or ".join(f"{s['date']} at {s['time']}" for s in slots)
     return f"{doctor['name']} is available {times}. Which time works better for you?"
 
@@ -233,6 +248,10 @@ def _handle_insurance(args: dict) -> str:
     return hospital.check_insurance(args.get("provider_name", ""))["message"]
 
 
+def _handle_list_accepted_insurance(_args: dict) -> str:
+    return hospital.list_accepted_insurance()["message"]
+
+
 HANDLERS = {
     "get_emergency_doctors": _handle_get_emergency,
     "get_doctors_by_specialty": _handle_get_doctors,
@@ -240,6 +259,7 @@ HANDLERS = {
     "book_appointment": _handle_book,
     "cancel_appointment": _handle_cancel,
     "check_insurance": _handle_insurance,
+    "list_accepted_insurance": _handle_list_accepted_insurance,
 }
 
 

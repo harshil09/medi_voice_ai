@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from database import ensure_emergency_column
-from routers import doctor, vapi_webhook
+from database import ensure_doctor_availability_table, ensure_emergency_column
+from routers import doctor, insurance, vapi_webhook
 
 app = FastAPI(title="Medical Care Hospital API", version="1.0")
 
@@ -8,8 +8,10 @@ app = FastAPI(title="Medical Care Hospital API", version="1.0")
 @app.on_event("startup")
 def migrate_schema():
     ensure_emergency_column()
+    ensure_doctor_availability_table()
 
 app.include_router(doctor.router)
+app.include_router(insurance.router)
 app.include_router(vapi_webhook.router)
 
 

@@ -22,16 +22,32 @@ cursor.executemany(
     ],
 )
 
-doctor_ids = [r[0] for r in cursor.execute("SELECT id FROM doctors")]
-slots = [
-    (did, date, time, 0)
-    for did in doctor_ids
-    for date in ("2026-05-26", "2026-05-27", "2026-05-28")
-    for time in ("09:00", "10:30", "13:00", "14:30", "16:00")
-]
+doctor_rows = {row[1]: row[0] for row in cursor.execute("SELECT id, name FROM doctors")}
+
+# Dynamic slots: window minutes / max_patients = slot length.
+# Mehta: 09:00-11:00 (120 min), 4 patients → 30 min → 09:00, 09:30, 10:00, 10:30
+# Patel: 12:00-13:00 (60 min), 4 patients → 15 min → 12:00, 12:15, 12:30, 12:45
+# Smith: 14:00-16:00 (120 min), 4 patients → 30 min
+# Kapoor: 10:00-12:00 (120 min), 4 patients → 30 min
+dates = ("2026-05-26", "2026-05-27", "2026-05-28")
+availability = []
+for d in dates:
+    availability.extend(
+        [
+            (doctor_rows["Dr. Mehta"], None, d, "09:00", "11:00", 4, None),
+            (doctor_rows["Dr. Patel"], None, d, "12:00", "13:00", 4, None),
+            (doctor_rows["Dr. Smith"], None, d, "14:00", "16:00", 4, None),
+            (doctor_rows["Dr. Kapoor"], None, d, "10:00", "12:00", 4, None),
+        ]
+    )
+
 cursor.executemany(
-    "INSERT INTO doctor_slots (doctor_id, slot_date, slot_time, is_booked) VALUES (?, ?, ?, ?)",
-    slots,
+    """
+    INSERT INTO doctor_availability
+        (doctor_id, day_of_week, avail_date, start_time, end_time, max_patients, slot_duration_minutes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """,
+    availability,
 )
 
 cursor.executemany(
@@ -48,4 +64,4 @@ cursor.executemany(
 
 conn.commit()
 conn.close()
-print("Seeded successfully.")
+print("Seeded successfully (dynamic availability; no hardcoded doctor_slots).")

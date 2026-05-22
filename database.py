@@ -22,6 +22,18 @@ def create_tables():
             emergency INTEGER DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS doctor_availability (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            doctor_id              INTEGER NOT NULL,
+            day_of_week            INTEGER,
+            avail_date             TEXT,
+            start_time             TEXT NOT NULL,
+            end_time               TEXT NOT NULL,
+            max_patients           INTEGER NOT NULL DEFAULT 4,
+            slot_duration_minutes  INTEGER,
+            FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+        );
+
         CREATE TABLE IF NOT EXISTS doctor_slots (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             doctor_id INTEGER NOT NULL,
@@ -57,9 +69,34 @@ def create_tables():
         );
     """)
     ensure_emergency_column(conn)
+    ensure_doctor_availability_table(conn)
     conn.commit()
     conn.close()
     print("Tables created successfully.")
+
+
+def ensure_doctor_availability_table(conn=None) -> None:
+    own = conn is None
+    if own:
+        conn = get_connection()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS doctor_availability (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            doctor_id              INTEGER NOT NULL,
+            day_of_week            INTEGER,
+            avail_date             TEXT,
+            start_time             TEXT NOT NULL,
+            end_time               TEXT NOT NULL,
+            max_patients           INTEGER NOT NULL DEFAULT 4,
+            slot_duration_minutes  INTEGER,
+            FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+        )
+        """
+    )
+    if own:
+        conn.commit()
+        conn.close()
 
 
 def ensure_emergency_column(conn=None) -> None:
