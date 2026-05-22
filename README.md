@@ -1,56 +1,97 @@
-# VAPI + FastAPI + SQLite (Medical Hospital)
+# VAPI Medical Hospital Assistant
 
-Basic setup so your VAPI voice assistant reads **real** doctor names, slots, and bookings from your database instead of inventing them.
+A **FastAPI** backend that connects a [VAPI](https://vapi.ai) voice assistant to a **SQLite** hospital database. The assistant uses real doctor names, computed appointment slots, bookings, cancellations, and insurance data instead of inventing answers.
 
-## 1. Install and seed
+## Features
+
+- **Doctor lookup** by specialty (`general`, `cardiologist`, `orthopedic`)
+- **Emergency routing** — on-call doctors (e.g. Dr. Shah) without booking flow
+- **Dynamic slots** — times derived from availability windows and patient capacity
+- **Book & cancel** appointments with patient name and phone
+- **Insurance** — list accepted providers or verify a single plan
+- **VAPI webhook** — single endpoint handles all tool calls with name aliases and specialty normalization
+
+## Tech stack
+
+- Python 3.11+
+- [FastAPI](https://fastapi.tiangolo.com/) + Uvicorn
+- SQLite (`hospital.db`)
+
+## Quick start
+
+### 1. Clone and install
 
 ```bash
-cd /home/dell/VAPI_MED
+git clone <your-repo-url>
+cd VAPI_MED
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+### 2. Seed the database
+
+```bash
 python names.py
 ```
 
-## 2. Run FastAPI
+Creates `hospital.db` with sample doctors, availability windows, and insurance providers. To re-seed, delete `hospital.db` and run `python names.py` again.
+
+### 3. Run the API
 
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Test: http://localhost:8000/health  
-Doctors: http://localhost:8000/doctors/specialty/general
+| Endpoint | Description |
+|----------|-------------|
+| http://localhost:8000/ | API index |
+| http://localhost:8000/health | Health check |
+| http://localhost:8000/doctors/specialty/general | Doctors by specialty (REST) |
+| http://localhost:8000/doctors/emergency | Emergency on-call doctors |
+| http://localhost:8000/insurance/accepted | Accepted insurance list |
+| http://localhost:8000/vapi/webhook | VAPI tool-calls (POST) |
 
-## 3. Expose with ngrok
+Interactive docs: http://localhost:8000/docs
 
-In another terminal:
+### 4. Expose for VAPI (ngrok)
+
+VAPI must reach your server over HTTPS. In a second terminal:
 
 ```bash
 ngrok http 8000
 ```
 
-Copy the HTTPS URL, e.g. `https://abc123.ngrok-free.app`
+Or use the included helper (requires ngrok in `bin/` or on `PATH`):
 
-Your VAPI tool server URL will be:
+```bash
+chmod +x start-ngrok.sh
+./start-ngrok.sh
+```
 
-`https://abc123.ngrok-free.app/vapi/webhook`
+Set each VAPI tool **Server URL** to:
 
-## 4. Create tools in VAPI Dashboard
+```text
+https://<your-ngrok-host>/vapi/webhook
+```
 
-For each tool: **Tools → Create Tool → Function**  
-Set **Server URL** to your ngrok URL + `/vapi/webhook`
+## VAPI setup
 
-| Tool name | Parameters (JSON schema) | When assistant uses it |
-|-----------|--------------------------|-------------------------|
-| `get_doctors_by_specialty` | `specialty` (string) | cardiologist / general / orthopedic |
-| `get_emergency_doctors` | (none) | heart pain, bleeding, accident, or caller says emergency |
-| `get_available_slots` | `doctor_name` (string), `limit` (number, optional, default 3) | before offering times |
-| `book_appointment` | `doctor_name`, `patient_name`, `phone`, `slot_date`, `slot_time` | after caller picks a slot |
-| `cancel_appointment` | `doctor_name`, `patient_name`, `slot_date`, `slot_time` (optional) | cancellation flow |
-| `list_accepted_insurance` | (none) | caller asks which insurance you accept / wants a list |
-| `check_insurance` | `provider_name` (string) | verify one specific insurance name |
+### Create tools
 
-Example parameter schema for `get_doctors_by_specialty`:
+In the VAPI dashboard: **Tools → Create Tool → Function**. Use the **Server URL** above for every tool. Function names must use **snake_case** (e.g. `get_doctors_by_specialty`, not the display title).
+
+| Tool name | Parameters | When to use |
+|-----------|------------|-------------|
+| `get_doctors_by_specialty` | `specialty` (string) | Routine visits: general / cardiologist / orthopedic |
+| `get_emergency_doctors` | (none) | Heart pain, bleeding, accident, or caller says emergency |
+| `get_available_slots` | `doctor_name`, `limit` (optional, default 3) | Before offering appointment times |
+| `book_appointment` | `doctor_name`, `patient_name`, `phone`, `slot_date`, `slot_time` | After caller picks a slot |
+| `cancel_appointment` | `patient_name`, `slot_date`, `slot_time` (optional), `doctor_name` (optional) | Cancellation flow |
+| `list_accepted_insurance` | (none) | Caller asks which insurance you accept |
+| `check_insurance` | `provider_name` (string) | Verify one specific insurer |
+
+Example schema for `get_doctors_by_specialty`:
 
 ```json
 {
@@ -65,62 +106,63 @@ Example parameter schema for `get_doctors_by_specialty`:
 }
 ```
 
-Add all tools to your assistant under **Tools**.
+Attach all tools to your assistant. Set **maxTokens** to **500** on each tool (default 100 can truncate responses).
 
-For `get_emergency_doctors`, use the schema in `vapi_tool_get_emergency_doctors.json` and a **description** that says to use it for emergency / heart pain / bleeding — not `get_doctors_by_specialty`. Attach it to the same assistant as the other tools.
+### Assistant prompt rules
 
-For `list_accepted_insurance`, use `vapi_tool_list_accepted_insurance.json` (empty parameters). **Description:** use when the caller asks which insurance providers are accepted or wants a list — not for checking one name (use `check_insurance`).
+- Never invent doctor names or appointment times — always call tools first.
+- **Routine:** `get_doctors_by_specialty` → `get_available_slots` → collect name/phone → `book_appointment`.
+- **Emergency:** `get_emergency_doctors` first; no booking for on-call emergency care.
+- **Insurance list:** `list_accepted_insurance`. **Single provider:** `check_insurance`.
 
-Test accepted list: http://localhost:8000/insurance/accepted
+Seeded emergency doctor: **Dr. Shah** (`emergency = 1`, 24/7, no booking required).
 
-## 5. Update assistant system prompt
+### Optional tool messages
 
-Update your VAPI assistant system prompt with the insurance section in **`VAPI_INSURANCE_PROMPT_SNIPPET.txt`** (or your full prompt file).
+- **Request start:** e.g. "One moment please."
+- **Request complete:** short acknowledgment or default
 
-Key rules:
+## Example call flow
 
-- Never invent doctor names or appointment times.
-- Routine booking: `get_doctors_by_specialty` → `get_available_slots` → name/phone → `book_appointment`.
-- Emergency (heart pain, bleeding, accident): `get_emergency_doctors` first — e.g. **Dr. Shah** is on duty 24/7; no booking needed.
-- Insurance list question → `list_accepted_insurance`. One provider check → `check_insurance`.
+1. Caller: "I need a general checkup."
+2. Assistant → `get_doctors_by_specialty` → Dr. Patel, Dr. Smith.
+3. Caller picks Dr. Patel.
+4. Assistant → `get_available_slots` with `limit: 3` → e.g. `2026-05-26 at 12:00, 12:15, or 12:45`.
+5. Caller picks a time; assistant collects name and phone.
+6. Assistant → `book_appointment` and confirms from the tool result.
 
-Doctors table includes `emergency` (1 = on-call emergency, 0 = routine only). Dr. Shah is seeded as emergency.
+## Project structure
 
-## 6. Tool messages (optional)
-
-In each tool’s dashboard settings:
-
-- **Request start:** "One moment please."
-- **Request complete:** (leave default or short ack)
-
-## Flow example
-
-1. Caller: "I need a general checkup"  
-2. Assistant calls `get_doctors_by_specialty` → `Dr. Patel, Dr. Smith`  
-3. Caller picks Dr. Patel  
-4. Assistant calls `get_available_slots` with `limit: 3` → e.g. `2026-05-26 at 12:00, 12:15, or 12:45` for Dr. Patel (slots computed from schedule window and patient capacity)  
-5. Caller picks 09:00  
-6. Assistant asks name + phone, then calls `book_appointment`  
-7. Assistant confirms using the tool result text
-
-## Project layout
-
-```
-main.py              # FastAPI app
-database.py          # SQLite schema (doctor_availability + appointments)
-names.py             # seed doctors + availability windows
-services/hospital.py # business logic (shared by webhook)
-routers/doctor.py    # REST for testing
-routers/vapi_webhook.py  # VAPI tool-calls handler
-hospital.db          # created after seed
+```text
+main.py                  # FastAPI app entry
+database.py              # SQLite schema and migrations
+names.py                 # Seed doctors, availability, insurance
+services/
+  hospital.py            # Business logic (doctors, slots, bookings, insurance)
+  scheduling.py          # Slot computation from availability windows
+routers/
+  doctor.py              # REST endpoints for testing
+  insurance.py           # REST insurance list
+  vapi_webhook.py        # VAPI tool-calls handler
+start-ngrok.sh           # Optional ngrok launcher
+requirements.txt
+hospital.db              # Created after seed (not committed — add to .gitignore)
 ```
 
 ## Troubleshooting
 
-- **404 on doctors:** use `general`, `cardiologist`, or `orthopedic` (see `names.py`).
-- **ngrok URL changed:** update every tool’s Server URL in VAPI.
-- **Tool not firing:** ensure tools are attached to the assistant and prompt says to use them.
-- **Empty slots:** slot may be booked or the doctor has no `doctor_availability` for that date. Delete `hospital.db` and run `python names.py` to re-seed.
-- **Tool “succeeds” but Sarah says error:** In VAPI dashboard for each tool set **maxTokens** to **500** (default 100 truncates the response). Function name must be `get_doctors_by_specialty` (snake_case), not the display title “Get Doctors By Specialty”. Check uvicorn logs for `tool_call raw_name=... result=...`.
-- **Tool called twice:** First call may use wrong `specialty` (e.g. `joint pain`); server maps it now. Second call should use `orthopedic`.
-- **Sarah won't list insurance:** Add tool `list_accepted_insurance` in VAPI and update the prompt per `VAPI_INSURANCE_PROMPT_SNIPPET.txt`. Sarah only knows what tools return — `check_insurance` alone cannot list all providers.
+| Issue | Fix |
+|-------|-----|
+| 404 on doctors | Use `general`, `cardiologist`, or `orthopedic` (see `names.py`). |
+| ngrok URL changed | Update Server URL on every VAPI tool. |
+| Tool not firing | Tools attached to assistant; prompt instructs tool use. |
+| Empty slots | Slot booked or no availability for that date; re-seed if needed. |
+| Tool succeeds but voice says error | Set tool **maxTokens** to 500; use snake_case function names. |
+| Wrong specialty on first call | Server maps common phrases; second call should use canonical specialty. |
+| Won't list all insurance | Add `list_accepted_insurance`; `check_insurance` only checks one name. |
+
+Check server logs for lines like `tool=get_doctors_by_specialty args=... result=...`.
+
+## License
+
+MIT — adjust as needed for your repository.
