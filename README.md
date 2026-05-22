@@ -162,7 +162,3 @@ hospital.db              # Created after seed (not committed — add to .gitigno
 | Won't list all insurance | Add `list_accepted_insurance`; `check_insurance` only checks one name. |
 
 Check server logs for lines like `tool=get_doctors_by_specialty args=... result=...`.
-
-## License
-
-MIT — adjust as needed for your repository.
