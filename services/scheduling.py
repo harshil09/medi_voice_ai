@@ -6,6 +6,9 @@ from datetime import date, datetime, timedelta
 
 from database import get_connection
 
+# Fixed gap between consecutive slot start times (visit length + this buffer).
+SLOT_BUFFER_MINUTES = 10
+
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
@@ -56,6 +59,19 @@ def slot_duration_minutes(
     return max(1, window // patients)
 
 
+def slot_spacing_minutes(
+    start_time: str,
+    end_time: str,
+    max_patients: int,
+    override: int | None = None,
+) -> int:
+    """Minutes between offered slot start times (appointment length + fixed buffer)."""
+    duration = slot_duration_minutes(start_time, end_time, max_patients, override)
+    if duration <= 0:
+        return 0
+    return duration + SLOT_BUFFER_MINUTES
+
+
 def generate_times_in_window(
     start_time: str,
     end_time: str,
@@ -64,7 +80,7 @@ def generate_times_in_window(
 ) -> list[str]:
     start_m = time_to_minutes(start_time)
     end_m = time_to_minutes(end_time)
-    step = slot_duration_minutes(
+    step = slot_spacing_minutes(
         start_time, end_time, max_patients, slot_duration_override
     )
     if step <= 0 or start_m >= end_m:
