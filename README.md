@@ -1,4 +1,4 @@
-# Medical Care Hospital Voice Assistant Backend
+# Vapi-Powered AI Hospital Booking Assistant
 
 A production-style FastAPI backend for a hospital call assistant built with [Vapi](https://vapi.ai). The service provides real doctor data, dynamic appointment slots, booking and cancellation workflows, insurance checks, and emergency routing through a single webhook-backed tool layer.
 
@@ -47,6 +47,46 @@ Typical routine booking flow:
 8. Assistant confirms the booking and closes the call.
 
 Emergency callers are handled separately through `get_emergency_doctors` and are not sent through the routine booking flow unless they explicitly ask for a scheduled visit.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Caller] --> B[Vapi Voice Assistant]
+    B --> C[Function Tools]
+    C --> D[ngrok HTTPS Endpoint]
+    D --> E[FastAPI App]
+
+    E --> F[routers/vapi_webhook.py]
+    E --> G[routers/doctor.py]
+    E --> H[routers/insurance.py]
+
+    F --> I[services/hospital.py]
+    I --> J[services/scheduling.py]
+    I --> K[(SQLite hospital.db)]
+
+    G --> I
+    H --> I
+    J --> K
+```
+
+### Component Responsibilities
+
+- **Vapi Voice Assistant** handles the live conversation, collects caller input, and decides when to call backend tools.
+- **ngrok** exposes the local FastAPI server to Vapi over HTTPS during development.
+- **`routers/vapi_webhook.py`** receives tool calls from Vapi, normalizes tool names and payloads, and dispatches them to backend services.
+- **`services/hospital.py`** contains the core business logic for doctor lookup, appointment booking, cancellation, and insurance checks.
+- **`services/scheduling.py`** generates available appointment times from doctor availability windows and applies the fixed slot buffer.
+- **`hospital.db`** stores doctors, availability, patients, appointments, and insurance provider data.
+
+### Request Flow
+
+1. A caller speaks with the Vapi assistant.
+2. The assistant chooses a function such as `get_doctors_by_specialty` or `book_appointment`.
+3. Vapi sends the function request to the FastAPI webhook through the ngrok URL.
+4. The webhook routes the request to the hospital service layer.
+5. The service layer reads from or writes to SQLite and returns a structured result.
+6. Vapi turns that result into a spoken response for the caller.
 
 ## Project Structure
 
