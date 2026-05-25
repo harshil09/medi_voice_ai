@@ -269,9 +269,3 @@ For debugging, watch the API logs for lines like:
 ```text
 tool=get_doctors_by_specialty args=... result=...
 ```
-
-## Notes
-
-- `hospital.db` is generated locally and should not be committed.
-- If you modify scheduling logic, reseed the database only when you want a clean local test state.
-- The voice experience depends on both this backend and the Vapi assistant configuration.
