@@ -1,4 +1,4 @@
-# Vapi-Powered AI Hospital Booking Assistant
+# MediVoice AI – Voice Hospital Booking Assistant
 
 A production-style FastAPI backend for a hospital call assistant built with [Vapi](https://vapi.ai). The service provides real doctor data, dynamic appointment slots, booking and cancellation workflows, insurance checks, and emergency routing through a single webhook-backed tool layer.
 
